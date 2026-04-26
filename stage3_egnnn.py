@@ -92,8 +92,12 @@ class EGNNNClassifier:
                     r_v = torch.rand(n_neurons, 1).to(self.device)
                     self.velocities[v_idx] = r_v * self.velocities[v_idx] + a
                     
+                    # Clamp velocities and weights to prevent exploding gradients
+                    self.velocities[v_idx] = torch.clamp(self.velocities[v_idx], -0.1, 0.1)
+                    
                     # Position (weight) update: x_i(w+1) = x_i(w) + v_i(w+1)
                     param.add_(self.velocities[v_idx])
+                    param.data = torch.clamp(param.data, -5.0, 5.0)
                     
                     v_idx += 1
 
@@ -195,11 +199,55 @@ class EGNNNClassifier:
             proba = torch.softmax(outputs, dim=1).cpu().numpy()
         return proba
 
-    def load_weights(self, weights_vector):
-        """Load flat weight vector into model for GROA integration"""
-        idx = 0
+    def load_weights(self, path_or_array):
+        """
+        Load weights from either a saved .pt file path or a flat numpy array.
+        Handles both GROA optimizer (array) and live IDS (string path).
+        """
+        if isinstance(path_or_array, str):
+            try:
+                state_dict = torch.load(path_or_array, map_location=self.device)
+                self.model.load_state_dict(state_dict)
+                print(f"[EGNNN] Successfully loaded weights from '{path_or_array}'.")
+            except Exception as e:
+                print(f"[EGNNN] ERROR loading weights from '{path_or_array}': {e}")
+        else:
+            # Handle GROA array loading
+            weights_vector = path_or_array
+            idx = 0
+            with torch.no_grad():
+                for name, param in self.model.named_parameters():
+                    length = param.numel()
+                    param.copy_(torch.tensor(weights_vector[idx:idx+length]).view(param.shape).to(self.device))
+                    idx += length
+
+    def eval_mode(self):
+        """
+        Sets the PyTorch model to evaluation mode.
+        Should be called once at startup before processing real-time packets.
+        Disables dropout layers and prepares for inference.
+        """
+        self.model.eval()
+
+    def predict_single(self, features_tensor):
+        """
+        Runs a forward pass on a single packet feature tensor.
+        Input: torch.Tensor of shape (1, 18)
+        Output: tuple (label_index, confidence, probabilities)
+        """
+        # Ensure we are not tracking gradients for inference
         with torch.no_grad():
-            for name, param in self.model.named_parameters():
-                length = param.numel()
-                param.copy_(torch.tensor(weights_vector[idx:idx+length]).view(param.shape).to(self.device))
-                idx += length
+            features_tensor = features_tensor.to(self.device)
+            # Run the forward pass to get raw logits
+            logits = self.model(features_tensor)
+            
+            # Apply softmax to get normalized probabilities
+            probabilities = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            
+            # Find the class index with the highest probability
+            label_index = int(np.argmax(probabilities))
+            
+            # Get the confidence value (max probability)
+            confidence = float(probabilities[label_index])
+            
+        return label_index, confidence, probabilities

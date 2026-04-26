@@ -4,7 +4,7 @@ import json
 import random
 
 class BGPoWBlockchain:
-    def __init__(self, n_nodes=5, difficulty_target=0x0000FFFF * (2 ** 208)):
+    def __init__(self, n_nodes=5, difficulty_target= 2 ** 252):
         self.n_nodes = n_nodes
         self.difficulty_target = difficulty_target
         self.chain = []
@@ -60,7 +60,7 @@ class BGPoWBlockchain:
         data_string = f"{previous_hash}{timestamp}"
         
         nonce = 0
-        max_attempts = 100000
+        max_attempts = 1000
         
         for _ in range(max_attempts):
             test_string = f"{data_string}{nonce}{merkle_root}"
@@ -132,13 +132,14 @@ class BGPoWBlockchain:
             self.chain.append(new_block)
             self.total_blocks_mined += 1
 
-    def validate_chain(self):
+    def validate_chain(self) -> bool:
         # Validate chain integrity
         for i in range(1, len(self.chain)):
             current = self.chain[i]
             previous = self.chain[i-1]
             
             if current["previous_hash"] != previous["hash"]:
+                print(f"[BLOCKCHAIN] Chain is INVALID at block {i}")
                 return False
                 
             data_string = f"{current['previous_hash']}{current['timestamp']}{current['nonce']}{current['merkle_root']}"
@@ -146,13 +147,24 @@ class BGPoWBlockchain:
             h2 = hashlib.sha256(h1.encode('utf-8')).hexdigest()
             
             if current["hash"] != h2:
+                print(f"[BLOCKCHAIN] Chain is INVALID at block {i}")
                 return False
                 
+        print("[BLOCKCHAIN] Chain is VALID")
         return True
 
     def print_chain_summary(self):
         print("\n--- Blockchain Summary ---")
-        print(f"Total blocks mined (Intrusions logged): {self.total_blocks_mined}")
-        print(f"Consensus rate: {(self.consensus_success / max(1, self.consensus_attempts)) * 100:.2f}%")
-        print(f"Chain Integrity Valid: {self.validate_chain()}")
+        print(f"Total blocks mined: {self.total_blocks_mined}")
+        
+        # Count attack types
+        from collections import Counter
+        attack_counts = Counter(b["detection_result"]["predicted_label"] for b in self.chain if b.get("detection_result"))
+        print(f"Number of attack types detected:")
+        for label, count in attack_counts.items():
+            print(f"  {label}: {count}")
+            
+        rate = (self.consensus_success / max(1, self.consensus_attempts)) * 100
+        print(f"Consensus rate: {rate:.2f}%")
+        self.validate_chain()
         print("--------------------------\n")
