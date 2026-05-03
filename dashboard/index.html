@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EGNNN-GROA Cloud IDS</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #0a0a0a;
+            color: #00ff41;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 1px solid #00ff41;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .stats-row {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background-color: #1a1a1a;
+            border: 1px solid #00ff41;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            flex: 1;
+            margin: 0 10px;
+        }
+        .alerts-table, .blockchain-log {
+            background-color: #1a1a1a;
+            border: 1px solid #00ff41;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .dos-row { background-color: #ff0000; }
+        .probe-row { background-color: #ffff00; color: #000; }
+        .r2l-row { background-color: #ffa500; }
+        .u2r-row { background-color: #800080; }
+        .high-severity { background-color: #ff000033; }
+        .suspicious-severity { background-color: #ffff0022; }
+        .charts-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            background-color: #1a1a1a;
+            border: 1px solid #00ff41;
+            border-radius: 5px;
+            padding: 15px;
+            width: 48%;
+        }
+        .timeline-chart {
+            background-color: #1a1a1a;
+            border: 1px solid #00ff41;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background-color: #00ff41;
+            border-radius: 50%;
+            margin-left: 10px;
+        }
+        .control-panel {
+            background-color: #1a1a1a;
+            border: 1px solid #00ff41;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .control-group label {
+            font-weight: bold;
+        }
+        .control-group select {
+            padding: 8px;
+            background-color: #0a0a0a;
+            color: #00ff41;
+            border: 1px solid #00ff41;
+            border-radius: 3px;
+        }
+        .control-group button {
+            padding: 8px 15px;
+            background-color: #00ff41;
+            color: #0a0a0a;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .control-group button:hover:not(:disabled) {
+            background-color: #00cc33;
+        }
+        .control-group button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>EGNNN-GROA Cloud IDS</h1>
+        <div>Status: <span id="ids-status">Offline</span> <span class="status-dot" id="status-dot"></span></div>
+        <div id="current-time"></div>
+        <div id="uptime"></div>
+    </div>
+
+    <div class="control-panel">
+        <div class="control-group">
+            <label for="interface-select">Network Interface:</label>
+            <select id="interface-select">
+                <option value="">Loading interfaces...</option>
+            </select>
+            <button id="start-btn" onclick="startIDS()">Start IDS</button>
+            <button id="stop-btn" onclick="stopIDS()" disabled>Stop IDS</button>
+        </div>
+    </div>
+
+    <div class="stats-row">
+        <div class="stat-card">
+            <h3>Total Packets</h3>
+            <div id="total-packets">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Alerts</h3>
+            <div id="total-alerts">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Packets/sec</h3>
+            <div id="packets-per-sec">0.0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Blockchain Blocks</h3>
+            <div id="blockchain-blocks">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Severity Breakdown</h3>
+            <div>HIGH: <span id="high-count">0</span> | SUSPICIOUS: <span id="suspicious-count">0</span></div>
+        </div>
+    </div>
+
+    <div class="charts-row">
+        <div class="chart-container">
+            <h3>Live Alerts Table</h3>
+            <div class="alerts-table">
+                <table id="alerts-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Severity</th>
+                            <th>Attack Type</th>
+                            <th>Confidence</th>
+                            <th>Source IP</th>
+                            <th>Destination IP</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-tbody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="chart-container">
+            <h3>Attack Distribution</h3>
+            <canvas id="attack-chart"></canvas>
+        </div>
+    </div>
+
+    <div class="timeline-chart">
+        <h3>Traffic Timeline (Packets/sec)</h3>
+        <canvas id="timeline-chart"></canvas>
+    </div>
+
+    <div class="blockchain-log">
+        <h3>Blockchain Log</h3>
+        <table id="blockchain-table">
+            <thead>
+                <tr>
+                    <th>Index</th>
+                    <th>Hash</th>
+                    <th>Attack Type</th>
+                    <th>Timestamp</th>
+                    <th>Valid</th>
+                </tr>
+            </thead>
+            <tbody id="blockchain-tbody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const socket = io();
+        let attackCounts = { DoS: 0, Probe: 0, R2L: 0, U2R: 0 };
+        let severityCounts = { HIGH: 0, SUSPICIOUS: 0 };
+
+        function playAlertSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                osc.frequency.value = 440;
+                osc.connect(ctx.destination);
+                osc.start();
+                setTimeout(() => osc.stop(), 200);
+            } catch(e) {}
+        }
+        let timelineData = [];
+        let attackChart, timelineChart;
+        let idsRunning = false;
+
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toLocaleString();
+        }
+
+        async function loadInterfaces() {
+            try {
+                const response = await fetch('/api/interfaces');
+                const data = await response.json();
+                const select = document.getElementById('interface-select');
+                select.innerHTML = '';
+                data.interfaces.forEach(iface => {
+                    const option = document.createElement('option');
+                    option.value = iface;
+                    option.textContent = iface;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading interfaces:', error);
+            }
+        }
+
+        async function startIDS() {
+            const interface = document.getElementById('interface-select').value;
+            if (!interface) {
+                alert('Please select a network interface');
+                return;
+            }
+            try {
+                const response = await fetch('/api/start-ids', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ interface })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    idsRunning = true;
+                    updateIDSStatus();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error starting IDS:', error);
+            }
+        }
+
+        async function stopIDS() {
+            try {
+                const response = await fetch('/api/stop-ids', { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    idsRunning = false;
+                    updateIDSStatus();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error stopping IDS:', error);
+            }
+        }
+
+        function updateIDSStatus() {
+            const dot = document.getElementById('status-dot');
+            const status = document.getElementById('ids-status');
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const select = document.getElementById('interface-select');
+            
+            if (idsRunning) {
+                status.textContent = 'Online';
+                dot.style.backgroundColor = '#00ff41';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                select.disabled = true;
+            } else {
+                status.textContent = 'Offline';
+                dot.style.backgroundColor = '#ff4444';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                select.disabled = false;
+            }
+        }
+
+        socket.on('ids_status_changed', function(data) {
+            idsRunning = data.is_running;
+            updateIDSStatus();
+        });
+
+        function initCharts() {
+            const attackCtx = document.getElementById('attack-chart').getContext('2d');
+            attackChart = new Chart(attackCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['DoS', 'Probe', 'R2L', 'U2R'],
+                    datasets: [{
+                        data: [0, 0, 0, 0],
+                        backgroundColor: ['#ff0000', '#ffff00', '#ffa500', '#800080']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+
+            const timelineCtx = document.getElementById('timeline-chart').getContext('2d');
+            timelineChart = new Chart(timelineCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Packets/sec',
+                        data: [],
+                        borderColor: '#00ff41',
+                        backgroundColor: 'rgba(0, 255, 65, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { display: true },
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        socket.on('new_alert', function(data) {
+            if (attackCounts.hasOwnProperty(data.attack_type)) {
+                attackCounts[data.attack_type]++;
+                attackChart.data.datasets[0].data = Object.values(attackCounts);
+                attackChart.update();
+            }
+
+            if (data.severity === 'HIGH') {
+                severityCounts.HIGH++;
+                document.getElementById('high-count').textContent = severityCounts.HIGH;
+                playAlertSound();
+            } else if (data.severity === 'SUSPICIOUS') {
+                severityCounts.SUSPICIOUS++;
+                document.getElementById('suspicious-count').textContent = severityCounts.SUSPICIOUS;
+            }
+
+            const tbody = document.getElementById('alerts-tbody');
+            const row = tbody.insertRow(0);
+            row.className = data.severity === 'HIGH' ? 'high-severity' : 'suspicious-severity';
+            row.innerHTML = `
+                <td>${data.time}</td>
+                <td>${data.severity || 'UNKNOWN'}</td>
+                <td>${data.attack_type}</td>
+                <td>${data.confidence.toFixed(2)}</td>
+                <td>${data.src_ip}</td>
+                <td>${data.dst_ip}</td>
+                <td>${data.reason || ''}</td>
+            `;
+
+            while (tbody.rows.length > 50) {
+                tbody.deleteRow(-1);
+            }
+        });
+
+        socket.on('stats_update', function(data) {
+            document.getElementById('total-packets').textContent = data.packets_seen;
+            document.getElementById('total-alerts').textContent = data.alerts_count;
+            document.getElementById('packets-per-sec').textContent = data.packets_per_sec;
+            document.getElementById('blockchain-blocks').textContent = data.blockchain_blocks;
+            document.getElementById('uptime').textContent = `Uptime: ${Math.floor(data.uptime / 3600)}h ${Math.floor((data.uptime % 3600) / 60)}m ${data.uptime % 60}s`;
+
+            const now = new Date().toLocaleTimeString();
+            timelineData.push({ time: now, pps: data.packets_per_sec });
+            if (timelineData.length > 60) {
+                timelineData.shift();
+            }
+            timelineChart.data.labels = timelineData.map(d => d.time);
+            timelineChart.data.datasets[0].data = timelineData.map(d => d.pps);
+            timelineChart.update();
+        });
+
+        async function loadInitialData() {
+            try {
+                const alertsResponse = await fetch('/api/alerts');
+                const alerts = await alertsResponse.json();
+                const tbody = document.getElementById('alerts-tbody');
+                alerts.forEach(alert => {
+                    if (alert.severity === 'HIGH') {
+                        severityCounts.HIGH++;
+                    } else if (alert.severity === 'SUSPICIOUS') {
+                        severityCounts.SUSPICIOUS++;
+                    }
+                    const row = tbody.insertRow();
+                    row.className = alert.severity === 'HIGH' ? 'high-severity' : 'suspicious-severity';
+                    row.innerHTML = `
+                        <td>${alert.time}</td>
+                        <td>${alert.severity || 'UNKNOWN'}</td>
+                        <td>${alert.attack_type}</td>
+                        <td>${alert.confidence.toFixed(2)}</td>
+                        <td>${alert.src_ip}</td>
+                        <td>${alert.dst_ip}</td>
+                        <td>${alert.reason || ''}</td>
+                    `;
+                    if (attackCounts.hasOwnProperty(alert.attack_type)) {
+                        attackCounts[alert.attack_type]++;
+                    }
+                });
+                document.getElementById('high-count').textContent = severityCounts.HIGH;
+                document.getElementById('suspicious-count').textContent = severityCounts.SUSPICIOUS;
+                attackChart.data.datasets[0].data = Object.values(attackCounts);
+                attackChart.update();
+
+                const blockchainResponse = await fetch('/api/blockchain');
+                const blocks = await blockchainResponse.json();
+                const blockchainTbody = document.getElementById('blockchain-tbody');
+                blocks.forEach(block => {
+                    const row = blockchainTbody.insertRow();
+                    row.innerHTML = `
+                        <td>${block.index}</td>
+                        <td>${block.hash}</td>
+                        <td>${block.attack_type}</td>
+                        <td>${block.timestamp}</td>
+                        <td>${block.valid ? '✓' : '✗'}</td>
+                    `;
+                });
+
+                const statusResponse = await fetch('/api/ids-status');
+                const statusData = await statusResponse.json();
+                idsRunning = statusData.is_running;
+                updateIDSStatus();
+            } catch (error) {
+                console.error('Error loading initial data:', error);
+            }
+        }
+
+        updateTime();
+        setInterval(updateTime, 1000);
+        initCharts();
+        loadInterfaces();
+        loadInitialData();
+        updateIDSStatus();
+    </script>
+</body>
+</html>
